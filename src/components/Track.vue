@@ -1,7 +1,12 @@
 <template>
-    <div class="track" @click="handleTrackClick" @dragover="handleDragOver" @dragleave="handleDragLeave" @drop.prevent="handleDrop" ref="trackEl">
-        <Node v-for="(node, index) in nodes" :key="node" :nodeIndex="index" :trackIndex="trackIndex"
-            :editorState="editorState" @drag-start="handleDragStart" ref="nodeEls" />
+    <div class="track" 
+    @mousedown="handleMouseDown"
+    @mouseup="handleMouseUp"
+    @mouseenter="handleMouseEnter"
+    
+     ref="trackEl">
+        <Node v-for="[nodeId, node] in track.nodes" :key="nodeId" :width="2" :node="node" :track="track"
+            :editorState="editorState" @drag-start="handleDragStart"  ref="nodeEls" />
         <div class="drop-placeholder" :class="{ visible: isDraggingOver }" :style="placeholderStyle"></div>
     </div>
 </template>
@@ -10,17 +15,16 @@
 import { ref } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
 import Node from './Node.vue'
-import type { EditorState } from '../types'
+import type { EditorState, TrackData } from '../types'
 const nodeEls = ref<ComponentPublicInstance[]>([])
 const trackEl = ref<HTMLElement>()
 
 const props = defineProps<{
-    trackIndex: number,
-    nodes: number[],
+    track: TrackData,
     editorState: EditorState
 }>()
 
-const emit = defineEmits(['add-node', 'drop-node'])
+const emit = defineEmits(['add-node', 'drag-start'])
 
 const isDraggingOver = ref(false)
 const placeholderStyle = ref({
@@ -28,42 +32,40 @@ const placeholderStyle = ref({
     display: 'none'
 })
 
-const handleTrackClick = (event: MouseEvent) => {
-    const trackRect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-    const clickX = event.clientX - trackRect.left
-    const insertIndex = calculateDropIndex(clickX)
-    emit('add-node', { trackIndex: props.trackIndex, insertIndex })
+const isMouseDown = ref(false)
+
+const handleMouseEnter = () => {
+    props.editorState.trackUnderMouse = props.track
 }
 
-const handleDragStart = (data: { nodeIndex: number, trackIndex: number }) => {
-    isDraggingOver.value = true
+// this could be stopped by a node, so when dragging node, handleTrackClick won't be called
+const handleMouseDown = (event: MouseEvent) => {
+    isMouseDown.value = true 
+}
+
+const handleMouseUp = (event: MouseEvent) => {
+    if (isMouseDown.value) {
+        handleTrackClick(event)
+    }
+    isMouseDown.value = false
+}
+
+const handleTrackClick = (event: MouseEvent) => {
+    if (props.editorState.drag) {
+        return
+    }
+    const trackRect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    const mouseX = event.clientX - trackRect.left
+    const mousePos = Math.floor(mouseX / props.editorState.xUnit)
+    emit('add-node', { trackId: props.track.id, mousePos })
+}
+
+const handleDragStart = (event: MouseEvent) => {
+    emit('drag-start')
 }
 
 const handleDragOver = (event: DragEvent) => {
-    if (props.editorState.draggingNode === null) {
-        return
-    }
-    event.preventDefault()
 
-    const trackRect = trackEl.value!.getBoundingClientRect()
-    const mouseX = event.clientX - trackRect.left
-
-    const { position, index } = calculatePlaceholderPosition(mouseX)
-    // if the node does not move, then don't show the placeholder
-    if (
-        (index == props.editorState.draggingNode.index || index == props.editorState.draggingNode.index + 1)
-        && props.editorState.draggingNode.trackIndex == props.trackIndex
-    ) {
-        placeholderStyle.value = {
-            left: '0px',
-            display: 'none'
-        }
-        return
-    }
-    placeholderStyle.value = {
-        left: `${position}px`,
-        display: 'block'
-    }
 }
 
 const handleDragLeave = (event: DragEvent) => {
@@ -77,16 +79,7 @@ const handleDragLeave = (event: DragEvent) => {
 }
 
 const handleDrop = (event: DragEvent) => {
-    isDraggingOver.value = false
-    placeholderStyle.value.display = 'none'
 
-    if (props.editorState.draggingNode !== null) {
-        const dropIndex = calculateDropIndex(event.clientX)
-        emit('drop-node', {
-            toTrack: props.trackIndex,
-            toIndex: dropIndex
-        })
-    }
 }
 
 const getNodeRects = () => {
@@ -115,7 +108,7 @@ const calculateDropIndex = (mouseX: number): number => {
         }
     }
 
-    return props.nodes.length
+    return props.track.nodes.size
 }
 
 const calculatePlaceholderPosition = (mouseX: number): { position: number, index: number } => {
@@ -151,7 +144,7 @@ const calculatePlaceholderPosition = (mouseX: number): { position: number, index
     background-color: var(--background-secondary);
     min-height: 100px;
     border-radius: 8px;
-    padding: 16px;
+    padding: 4px;
     position: relative;
     display: flex;
     gap: 16px;

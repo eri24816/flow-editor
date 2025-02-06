@@ -2,8 +2,8 @@
     <div class="flow-editor">
         <button class="add-track-btn" @click="addTrack">Add Track</button>
         <div class="tracks-container">
-            <Track v-for="(track, index) in tracks" :key="track.id" :trackIndex="index" :nodes="track.nodes"
-                :editorState="editorState" @add-node="handleAddNode" @drop-node="handleNodeDrop" />
+            <Track v-for="[trackId, track] in editorState.tracks" :key="trackId" :track="track"
+                :editorState="editorState" @add-node="handleAddNode" @drag-start="handleDragStart" />
         </div>
     </div>
 </template>
@@ -11,47 +11,147 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import Track from './Track.vue'
-import type { TrackData, EditorState } from '../types'
+import type { EditorState, TrackData, NodeData } from '../types'
+import { generateId } from '../util'
 
 const editorState = ref<EditorState>({
-    draggingNode: null
+    drag: null,
+    trackUnderMouse: null,
+    xUnit: 100,
+    gap: 10,
+    tracks: new Map()
 })
 
-const tracks = ref<TrackData[]>([])
-
 const addTrack = () => {
-    tracks.value.push({
-        id: tracks.value.length,
-        nodes: []
+    const trackId = generateId()
+    editorState.value.tracks.set(trackId, {
+        id: trackId,
+        nodes: new Map()
     })
 }
 
-const handleAddNode = (data: { trackIndex: number, insertIndex: number }) => {
-    const track = tracks.value[data.trackIndex]
-    track.nodes.splice(data.insertIndex, 0, Date.now())
-}
-
-const handleNodeDrop = (data: { toTrack: number, toIndex: number }) => {
-    let { toTrack, toIndex } = data
-    if (editorState.value.draggingNode === null) {
+const handleAddNode = (data: { trackId: number, mousePos: number }) => {
+    const { trackId, mousePos } = data
+    const track = editorState.value.tracks.get(trackId)
+    if (!track) {
         return
     }
-    const fromTrack = editorState.value.draggingNode.trackIndex
-    const fromIndex = editorState.value.draggingNode.index
+    const nodeId = generateId()
+    track.nodes.set(nodeId, {
+        title: 'New Node',
+        width: 2,
+        position: mousePos,
+        displayPosition: mousePos,
+        id: nodeId
+    })
+}
 
-    // Get the node being moved
-    const sourceTrack = tracks.value[fromTrack]
-    const [movedNode] = sourceTrack.nodes.splice(fromIndex, 1)
+const handleDragStart = (event: MouseEvent) => {
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+}
 
-    // Insert node at the new position
-    if (fromTrack === toTrack) {
-        if (toIndex > fromIndex) {
-            toIndex--
+const handleMouseMove = (event: MouseEvent) => {
+    if (!editorState.value.drag) return
+    const deltaX = event.clientX - editorState.value.drag.startX
+    let newPosition = editorState.value.drag.startPosition + Math.round(deltaX / editorState.value.xUnit)
+    newPosition = Math.max(0, newPosition)
+    const toTrackId = editorState.value.trackUnderMouse?.id ?? editorState.value.drag.track.id
+    if (newPosition != editorState.value.drag.node.position || toTrackId != editorState.value.drag.track.id) {
+        handleDragMove(
+            editorState.value.drag.node.id,
+            editorState.value.drag.track.id,
+            toTrackId,
+            editorState.value.drag.node.position,
+            newPosition
+        )
+    }
+}
+
+const handleMouseUp = (event: MouseEvent) => {
+    document.removeEventListener('mousemove', handleMouseMove)
+    document.removeEventListener('mouseup', handleMouseUp)
+    editorState.value.drag = null
+    applyDisplayPosition()
+}
+
+const nodeOverlap = (a: NodeData, b: NodeData) => {
+    let overlap = Math.min(a.position + a.width, b.position + b.width) - Math.max(a.position, b.position)
+    return Math.max(overlap, 0)
+}
+
+const updateOtherNodesPosition = (track: TrackData, targetNode: NodeData) => {
+    const nodes = track.nodes
+    const nodesSorted = Array.from(nodes.values()).sort((a, b) => a.position - b.position 
+    + 0.1*(a.id==targetNode.id?-1:1) - 0.1* (b.id==targetNode.id?-1:1))
+    
+    const targetNodeIndex = nodesSorted.findIndex(node => node.id === targetNode.id)
+    const rightNodes = nodesSorted.slice(targetNodeIndex)
+    
+    // if targetNode overlap with the left node, move targetNode
+    if (targetNodeIndex > 0) {
+        const leftNode = nodesSorted[targetNodeIndex - 1]
+        if (nodeOverlap(targetNode, leftNode) > 0) {
+
+            targetNode.position = leftNode.position + leftNode.width
+            targetNode.displayPosition = targetNode.position
         }
     }
-    const targetTrack = tracks.value[toTrack]
-    targetTrack.nodes.splice(toIndex, 0, movedNode)
-    editorState.value.draggingNode = null
+
+    // move right nodes if they overlap
+    for (let i = 0; i < rightNodes.length - 1; i++) {
+        const node = rightNodes[i]
+        const nextNode = rightNodes[i + 1]
+        if (node.displayPosition + node.width > nextNode.displayPosition) {
+            nextNode.displayPosition = node.displayPosition + node.width
+        }
+    }
+}
+
+const handleDragMove = (nodeId: number, fromTrackId: number, toTrackId: number, fromPosition: number, toPosition: number ) => {
+    resetDisplayPosition()
+    console.log({nodeId, fromTrackId, toTrackId, fromPosition, toPosition})
+    if (fromTrackId === toTrackId) {
+        const track = editorState.value.tracks.get(fromTrackId)
+        if (!track) return
+        const node = track.nodes.get(nodeId)
+        if (!node) return
+
+        node.position = toPosition
+        node.displayPosition = toPosition
+        updateOtherNodesPosition(track, node)
+
+    } else {
+        const fromTrack = editorState.value.tracks.get(fromTrackId)!
+        const toTrack = editorState.value.tracks.get(toTrackId)!
+        const node = fromTrack.nodes.get(nodeId)!
+        fromTrack.nodes.delete(nodeId)
+        toTrack.nodes.set(nodeId, node)
+        node.position = toPosition
+        node.displayPosition = toPosition
+
+        editorState.value.drag!.track = toTrack
+        
+        updateOtherNodesPosition(toTrack, node)
+    }
+}
+
+const resetDisplayPosition = () => {
+    // set position to displayPosition
+    for (const track of editorState.value.tracks.values()) {
+        for (const node of track.nodes.values()) {
+            node.displayPosition = node.position
+        }
+    }
+}
+
+const applyDisplayPosition = () => {
+    // set position to displayPosition
+    for (const track of editorState.value.tracks.values()) {
+        for (const node of track.nodes.values()) {
+            node.position = node.displayPosition
+        }
+    }
 }
 </script>
 

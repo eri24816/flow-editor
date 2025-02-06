@@ -1,48 +1,62 @@
 <template>
-    <div class="node" draggable="true" @dragstart="handleDragStart" @dragend="handleDragEnd">
-        Node {{ nodeIndex }} {{ random }}
+    <div class="node"
+     @mousedown.stop="handleMouseDown"
+     :style="{ left: `${left}px`, width: `${width}px` }" :class="{ dragging: isDragging }" >
+        {{ node.title }} | {{ node.id }}
     </div>
 </template>
 
 <script setup lang="ts">
-import type { EditorState } from '../types'
+import type { EditorState, NodeData, TrackData } from '../types'
+import { computed } from 'vue'
 const props = defineProps<{
-    nodeIndex: number
-    trackIndex: number
-    editorState: EditorState
+    editorState: EditorState,
+    node: NodeData,
+    track: TrackData
 }>()
 
-const random = Math.random()
 
-const emit = defineEmits(['drag-start'])
+const emit = defineEmits(['drag-start', 'drag-move', 'drag-end'])
 
-const handleDragStart = (event: DragEvent) => {
-    props.editorState.draggingNode = {
-        position: 0,
-        trackIndex: props.trackIndex,
-        index: props.nodeIndex
+
+const handleMouseDown = (event: MouseEvent) => {
+    props.editorState.drag = {
+        node: props.node,
+        track: props.track,
+        startX: event.clientX,
+        startPosition: props.node.position
     }
-    emit('drag-start', { nodeIndex: props.nodeIndex, trackIndex: props.trackIndex })
+    emit('drag-start')
 }
 
-const handleDragEnd = () => {
-    // Handle drag end if needed
-}
+const isDragging = computed(() => {
+    return props.editorState.drag?.node.id === props.node.id
+})
+
+
+
+const left = computed(() => {
+    return props.node.displayPosition * props.editorState.xUnit + props.editorState.gap
+})
+
+const width = computed(() => {
+    return props.node.width * props.editorState.xUnit - 2*props.editorState.gap
+})
+
 </script>
 
 <style scoped>
 .node {
+    position: absolute;
     background-color: var(--background-primary);
     border: 1px solid var(--border-color);
     border-radius: 6px;
     padding: 16px;
-    min-width: 100px;
-    cursor: move;
     user-select: none;
     color: var(--text-primary);
+    height: 100px;
 }
-
-.node:hover {
+.dragging {
     border-color: var(--accent-color);
 }
 </style>
